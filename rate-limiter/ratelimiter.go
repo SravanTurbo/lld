@@ -81,7 +81,14 @@ func main(usrId userID) {
 
 
 
-
+//follow-up:
+// what changes if requirements evolve: configuration, algorithm? what are the abstractions?
+// what changes if this becomes distributed?
+// what should we measure? 
+// - metrics (allow_total, deny_total, active_users, lookup_latency, algorithm_latency, memory_usage), 
+// - tracing (allow - lookup - algorithm - decision)
+// - logging (only unusual events)
+// Testing?
 
 
 
