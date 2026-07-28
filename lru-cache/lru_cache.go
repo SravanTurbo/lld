@@ -2,6 +2,7 @@
 // requirements
 // algorithm
 // state
+// config: capacity
 // datastructure: hashmap + DLL for O(1) Put and Get methods
 // concurrency:sync.Mutex lock on LRUCache because Get is also a write
 // API
