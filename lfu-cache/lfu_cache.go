@@ -1,6 +1,8 @@
 package lfucache
 
-import "sync"
+import (
+	"sync"
+)
 
 type Node struct {
 	key string
@@ -19,19 +21,21 @@ type FrequencyGroup struct{
 type LFU struct {
 	mu sync.Mutex
 	capacity int
+	score int
 	minFrequency int
 
 	items map[string]*Node
 	groups map[int]*FrequencyGroup
 }
 
-func NewLFU(capacity int) *LFU{
+func NewLFUCache(capacity int) *LFU{
 	if capacity <= 0{
 		panic("capacity must be >0")
 	}
 
 	return &LFU{
 		capacity: capacity,
+		score: 1, 
 		minFrequency: 0,
 
 		items: make(map[string]*Node),
@@ -39,28 +43,7 @@ func NewLFU(capacity int) *LFU{
 	}
 }
 
-func (cache *LFU) Get(key string) (string, bool){
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-
-	node, ok := cache.items[key]
-	if !ok{
-		return "", false
-	}
-
-	//remove from current frequency group
-	node.prev.next = node.next
-	node.next.prev = node.prev
-
-	node.frequency++
-
-	cache.addToGroups(node)
-
-	cache.updateMinFrequency(node.frequency-1)
-
-	return node.value, true
-}
-
+//Time-Complexity: O(1)
 func (cache *LFU) Put(key, value string){
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -80,36 +63,38 @@ func (cache *LFU) Put(key, value string){
 		frequency: 0,
 	}
 
-	cache.add(node)
-
-	cache.minFrequency = 0
+	cache.insertToGroup(node)
+	cache.items[node.key] = node
+	cache.minFrequency = node.frequency
 }
 
+//Time-Complexity: O(1)
 func (cache *LFU) evict(){
-	freqGroup, _ := cache.groups[cache.minFrequency]
-	freqGroup.tail.prev.prev.next = freqGroup.tail.prev.next
-	freqGroup.tail.prev = freqGroup.tail.prev.prev
+	freqGroup, ok := cache.groups[cache.minFrequency]
+	if !ok{
+		panic("cannot evict non-existing list")
+	}
+
+	lruItem := freqGroup.popLRU()
+
+	if freqGroup.isEmpty(){
+		delete(cache.groups, cache.minFrequency)
+	}
+	
+	delete(cache.items, lruItem.key)
 }
 
-
-func (cache *LFU) add(node *Node){
-	cache.addToGroups(node)
-	cache.addToItems(node)
-}
-
-func (cache *LFU)addToGroups(node *Node){
+//Time-Complexity: O(1)
+func (cache *LFU) insertToGroup(node *Node){
 	freqGroup, ok := cache.groups[node.frequency]
 	if !ok{
 		freqGroup = cache.addGroup(node.frequency)
 	}
 
-	node.prev = freqGroup.head
-	freqGroup.head.next.prev = node
-
-	node.next = freqGroup.head.next
-	freqGroup.head.next = node
+	freqGroup.addToFront(node)
 }
 
+//Time-Complexity: O(1)
 func (cache *LFU)addGroup(frequency int) *FrequencyGroup{
 	head := &Node{}
 	tail := &Node{}
@@ -125,19 +110,71 @@ func (cache *LFU)addGroup(frequency int) *FrequencyGroup{
 	return cache.groups[frequency]
 }
 
-func (cache *LFU)addToItems(node *Node){
-	cache.items[node.key] = node
-}
+//time-Complexity: O(1); space-complexity: O()
+func (cache *LFU) Get(key string) (string, bool){
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
 
-func (cache *LFU)updateMinFrequency(frequency int){
-	if cache.minFrequency != frequency{
-		return
+	node, ok := cache.items[key]
+	if !ok{
+		return "", false
 	}
 
-	minFreqGroup, _ := cache.groups[cache.minFrequency]
-	if minFreqGroup.head.next != minFreqGroup.tail{
-		return
+	cache.promote(node)
+
+	return node.value, true
+}
+
+//Time-Complexity: O(1)
+func (cache *LFU) promote(node *Node){
+	freqGroup, ok := cache.groups[node.frequency]
+	if !ok{
+		panic("frequency group not found, items and groups diverged")
 	}
 
-	cache.minFrequency++
+	freqGroup.remove(node)
+
+	if freqGroup.isEmpty(){
+		delete(cache.groups, node.frequency)
+		cache.minFrequency = node.frequency + cache.score
+	}
+
+	node.frequency += cache.score
+
+	cache.insertToGroup(node)
 }
+
+//Time-Complexity: O(1)
+func (fg *FrequencyGroup) popLRU() *Node {
+	if fg.isEmpty(){
+		panic("cannot pop from empty frequency group")
+	}
+
+	lruItem := fg.tail.prev
+	fg.remove(lruItem)
+	return lruItem
+}
+
+//Time-Complexity: O(1)
+func (fg *FrequencyGroup) isEmpty() bool {
+	return fg.head.next == fg.tail
+}
+
+//Time-Complexity: O(1)
+func (fg *FrequencyGroup) remove(node *Node){
+	node.prev.next = node.next
+	node.next.prev = node.prev
+
+	node.next = nil
+	node.prev = nil
+}
+
+//Time-Complexity: O(1)
+func (fg *FrequencyGroup)addToFront(node *Node){
+	node.prev = fg.head
+	fg.head.next.prev = node
+
+	node.next = fg.head.next
+	fg.head.next = node
+}
+
